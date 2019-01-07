@@ -19,7 +19,7 @@ def make_dataset(dataset_len, sequence_len):
     data = np.zeros((dataset_len, sequence_len, 28, 28))
     i = 0
     for _, (dat, _) in enumerate(train):
-        frame = dat[0][0].cpu().numpy()
+        frame = dat[0][0].cpu().numpy() * 1/255.
         data[i][0] = frame
 
         left = random.randint(0, 1) == 1
