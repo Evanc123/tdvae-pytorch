@@ -3,6 +3,7 @@ import argparse
 import torch
 import torch.utils.data
 from torch import nn, optim
+from torch.autograd import Variable
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
@@ -153,12 +154,14 @@ class TdVae(nn.Module):
         for t in range(10000):
             batch_idx = random.randint(0, dataset_len - self.batch_size - 1)
             batch = dataset[batch_idx:batch_idx + batch_size].reshape(self.batch_size, 20, 784) / 255.
+            batch = Variable(batch, requires_grad=True)
             jmp_idx    = random.randint(1, 4)
-            start_idx  = random.randint(4, 10)
+            start_idx  = 2
             end_idx = jmp_idx + start_idx
 
+            opt.zero_grad()
+            self.zero_grad()
             model = self.lstm
-            model.zero_grad()
             model.hidden = self.init_hidden()
             loss = 0.0
             """ Roll Forward LSTM"""
@@ -182,13 +185,13 @@ class TdVae(nn.Module):
             z_t_2_p = p_p.sample()
 
             x_rec = self.p_d(z_t_2)
-            l_x = torch.nn.MSELoss()(x_rec, batch[:, i])
+            l_x = torch.nn.MSELoss()(x_rec, batch[:, i].data)
             l_2 = torch.mean(torch.sum(torch.distributions.kl.kl_divergence(q_I, p_b), dim=1))
 
             log_p_b = torch.sum(p_b.log_prob(z_t_2_p), dim=1)
             log_p_p = torch.sum(p_p.log_prob(z_t_2_p), dim=1)
             l_1 = torch.mean(log_p_b - log_p_p)
-            loss = l_x
+            loss = l_x #+ l_1 + l_2
             if t == 5000:
                 import pdb; pdb.set_trace()
             print('mse', l_x.item(), 'kl', l_2.item(), 'logprob', l_1.item(), 'step', t)
