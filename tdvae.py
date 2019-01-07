@@ -76,7 +76,9 @@ class TdVae(nn.Module):
         self.rep_size = 50
         self.half_rep = int(self.rep_size / 2)
         self.b_t_size = 50
+        self.z_size = 8
         self.batch_size = batch_size
+
 
         self.fenc1 = nn.Linear(784, 400)
         self.fenc2 = nn.Linear(400, 50)
@@ -84,25 +86,25 @@ class TdVae(nn.Module):
         """P_b(z | b) """
         self.p_b_f_1 = nn.Linear(50, 50)
         self.p_b_f_2 = nn.Linear(50, 50)
-        self.p_b_f_sig = nn.Linear(50, 8)
-        self.p_b_f_mu  = nn.Linear(50, 8)
+        self.p_b_f_sig = nn.Linear(50, self.z_size)
+        self.p_b_f_mu  = nn.Linear(50, self.z_size)
 
         """P(z_2 | z_1) """
         self.p_p_f_1 = nn.Linear(8, 50)
         self.p_p_f_2 = nn.Linear(50, 50)
         self.p_p_f_3 = nn.Linear(50, 50)
-        self.p_p_f_mu = nn.Linear(50, 8)
-        self.p_p_f_sig = nn.Linear(50, 8)
+        self.p_p_f_mu = nn.Linear(50, self.z_size)
+        self.p_p_f_sig = nn.Linear(50, self.z_size)
 
         """Q(z_t_1 | z_t_2, b_t_1, b_t_2) """
-        self.q_I_f_1 = nn.Linear(50 + 50 + 8, 50)
+        self.q_I_f_1 = nn.Linear(50 + 50 + self.z_size, 50)
         self.q_I_f_2 = nn.Linear(50, 50)
         self.q_I_f_3 = nn.Linear(50, 50)
-        self.q_I_f_mu = nn.Linear(50, 8)
-        self.q_I_f_sig = nn.Linear(50, 8)
+        self.q_I_f_mu = nn.Linear(50, self.z_size)
+        self.q_I_f_sig = nn.Linear(50, self.z_size)
 
         """ P_D(x | z)"""
-        self.fdec0 = nn.Linear(8, 50)
+        self.fdec0 = nn.Linear(self.z_size, 50)
         self.fdec1 = nn.Linear(50, 400)
         self.fdec2 = nn.Linear(400, 784)
 
@@ -154,14 +156,13 @@ class TdVae(nn.Module):
         for t in range(10000):
             batch_idx = random.randint(0, dataset_len - self.batch_size - 1)
             batch = dataset[batch_idx:batch_idx + batch_size].reshape(self.batch_size, 20, 784) / 255.
+
             batch = Variable(batch, requires_grad=True)
             jmp_idx    = random.randint(1, 4)
             start_idx  = 2
             end_idx = jmp_idx + start_idx
-
-            opt.zero_grad()
-            self.zero_grad()
             model = self.lstm
+            model.zero_grad()
             model.hidden = self.init_hidden()
             loss = 0.0
             """ Roll Forward LSTM"""
@@ -197,6 +198,8 @@ class TdVae(nn.Module):
             print('mse', l_x.item(), 'kl', l_2.item(), 'logprob', l_1.item(), 'step', t)
             loss.backward()
             opt.step()
+            opt.zero_grad()
+
 
 batch_size = 256
 mean_field = TdVae(batch_size).to(device)
