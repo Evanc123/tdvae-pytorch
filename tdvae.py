@@ -18,6 +18,9 @@ def vis(arr):
     plt.imshow(arr)
     plt.show()
 
+def gpu_vis(arr):
+    vis(arr.cpu().numpy().reshape(28, 28))
+
 dataset_len = 5000
 seq_len = 20
 device = torch.device("cuda")
@@ -46,7 +49,7 @@ class TdVae(nn.Module):
 
        Losses:
          1. L_x is the reconstruction loss on x_2
-         2. L_x is log p^B_2 - log p^P_2 computed
+         2. L_1 is log p^B_2 - log p^P_2 computed
             using distributions.log_likelihood. This
             term is to make the predictive distribution
             able to compute z_2 from z_1 as if it had
@@ -150,7 +153,6 @@ class TdVae(nn.Module):
         for t in range(10000):
             batch_idx = random.randint(0, dataset_len - self.batch_size - 1)
             batch = dataset[batch_idx:batch_idx + batch_size].reshape(self.batch_size, 20, 784) / 255.
-            import pdb; pdb.set_trace()
             jmp_idx    = random.randint(1, 4)
             start_idx  = random.randint(4, 10)
             end_idx = jmp_idx + start_idx
@@ -187,13 +189,15 @@ class TdVae(nn.Module):
             log_p_p = torch.sum(p_p.log_prob(z_t_2_p), dim=1)
             l_1 = torch.mean(log_p_b - log_p_p)
             loss = l_x
-            print('mse', l_x.item(), 'kl', l_2.item(), 'logprob', l_1.item())
+            if t == 5000:
+                import pdb; pdb.set_trace()
+            print('mse', l_x.item(), 'kl', l_2.item(), 'logprob', l_1.item(), 'step', t)
             loss.backward()
-            optimizer.step()
+            opt.step()
 
 batch_size = 256
 mean_field = TdVae(batch_size).to(device)
-optimizer = optim.Adam(mean_field.parameters(), lr=1e-3)
+optimizer = optim.Adam(mean_field.parameters(), lr=1e-5)
 
 mean_field.train(dataset, optimizer)
 

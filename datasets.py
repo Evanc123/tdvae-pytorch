@@ -3,6 +3,13 @@ import torch
 from torchvision import datasets, transforms
 import torch.utils.data
 import random
+import matplotlib.pyplot as plt
+
+def vis(arr):
+    plt.imshow(arr)
+    plt.show()
+
+
 train = torch.utils.data.DataLoader(
     datasets.MNIST('../data', train=True, download=True,
                    transform=transforms.ToTensor()),
@@ -14,8 +21,10 @@ def make_dataset(dataset_len, sequence_len):
     for _, (dat, _) in enumerate(train):
         frame = dat[0][0].cpu().numpy()
         data[i][0] = frame
+
+        left = random.randint(0, 1) == 1
         for j in range(1, sequence_len):
-            if random.randint(0, 1) == 1:
+            if left:
                 frame = np.roll(frame, 1, axis=1)
                 data[i][j] = np.copy(frame)
             else:
