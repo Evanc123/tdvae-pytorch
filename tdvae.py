@@ -31,6 +31,10 @@ dataset = datasets.make_dataset(dataset_len, seq_len)
 dataset = torch.Tensor(dataset).to(device)
 
 
+def eye_like(tensor):
+    return torch.eye(*tensor.size(), out=torch.empty_like(tensor))
+
+
 class TdVae(nn.Module):
     """
        MLP TdVae Implementation:
@@ -74,7 +78,7 @@ class TdVae(nn.Module):
     def __init__(self, batch_size):
         super(TdVae, self).__init__()
         self.b_t_size = 400
-        self.z_size = 100
+        self.z_size = 50
         self.batch_size = batch_size
 
 
@@ -84,6 +88,7 @@ class TdVae(nn.Module):
         """P_b(z | b) """
         self.p_b_f_1 = nn.Linear(self.b_t_size, self.b_t_size)
         self.p_b_f_2 = nn.Linear(self.b_t_size, self.b_t_size)
+        #self.p_b_f_sig = nn.Linear(self.b_t_size, self.z_size * self.z_size)
         self.p_b_f_sig = nn.Linear(self.b_t_size, self.z_size)
         self.p_b_f_mu  = nn.Linear(self.b_t_size, self.z_size)
 
@@ -92,6 +97,7 @@ class TdVae(nn.Module):
         self.p_p_f_2 = nn.Linear(self.b_t_size, self.b_t_size)
         self.p_p_f_3 = nn.Linear(self.b_t_size, self.b_t_size)
         self.p_p_f_mu = nn.Linear(self.b_t_size, self.z_size)
+        #self.p_p_f_sig = nn.Linear(self.b_t_size, self.z_size * self.z_size)
         self.p_p_f_sig = nn.Linear(self.b_t_size, self.z_size)
 
         """Q(z_t_1 | z_t_2, b_t_1, b_t_2) """
@@ -100,6 +106,7 @@ class TdVae(nn.Module):
         self.q_I_f_2 = nn.Linear(self.b_t_size, self.b_t_size)
         self.q_I_f_3 = nn.Linear(self.b_t_size, self.b_t_size)
         self.q_I_f_mu = nn.Linear(self.b_t_size, self.z_size)
+        #self.q_I_f_sig = nn.Linear(self.b_t_size, self.z_size * self.z_size)
         self.q_I_f_sig = nn.Linear(self.b_t_size, self.z_size)
 
         """ P_D(x | z)"""
@@ -109,6 +116,9 @@ class TdVae(nn.Module):
 
         """ LSTM"""
         self.lstm  = nn.LSTM(self.b_t_size, self.b_t_size, batch_first=True)
+        self.eye = torch.eye(self.z_size).cuda()
+        self.empty_ones = torch.eye(self.z_size).unsqueeze(0).repeat(self.batch_size, 1, 1).cuda()
+
 
     def p_b(self, b):
         tanh = F.tanh(self.p_b_f_1(b))
@@ -117,7 +127,10 @@ class TdVae(nn.Module):
         #out = F.relu(self.p_b_f_2(b))
         mu = self.p_b_f_mu(out)
         sigma = torch.exp(self.p_b_f_sig(out))
-        dist = Normal(mu, sigma)
+        return Normal(mu, sigma)
+        import pdb; pdb.set_trace()
+        #eyes = sigma.view(-1, self.z_size, self.z_size) * self.eye
+        dist = MultivariateNormal(mu, eyes)
         return dist
 
     def q_I(self, z_t_2, b_t_1, b_t_2):
@@ -128,7 +141,9 @@ class TdVae(nn.Module):
         #out = F.relu(self.q_I_f_2(pre))
         mu = self.q_I_f_mu(out)
         sigma = torch.exp(self.q_I_f_sig(out))
-        dist = Normal(mu, sigma)
+        return Normal(mu, sigma)
+        eyes = sigma.view(-1, self.z_size, self.z_size) * self.eye
+        dist = MultivariateNormal(mu, eyes)
         return dist
 
     def p_p(self, z_1):
@@ -139,7 +154,9 @@ class TdVae(nn.Module):
         #out = F.relu(self.p_p_f_2(pre))
         mu = self.p_p_f_mu(out)
         sigma = torch.exp(self.p_p_f_sig(out))
-        dist = Normal(mu, sigma)
+        return Normal(mu, sigma)
+        eyes = sigma.view(-1, self.z_size, self.z_size) * self.eye
+        dist = MultivariateNormal(mu, eyes)
         return dist
 
     def encode(self, x):
@@ -159,7 +176,7 @@ class TdVae(nn.Module):
             batch_idx = random.randint(0, dataset_len - self.batch_size - 1)
             batch = dataset[batch_idx:batch_idx + batch_size].reshape(self.batch_size, 20, 784)
             batch = Variable(batch, requires_grad=True)
-            jmp_idx    = random.randint(1, 2)
+            jmp_idx    = random.randint(1, 1)
             start_idx  = 2
             end_idx = jmp_idx + start_idx
             model = self.lstm
@@ -180,11 +197,11 @@ class TdVae(nn.Module):
             p_b_1 = self.p_b(b_t_1)
 
             """Get our sample z_t_2 """
-            z_t_2 = p_b_2.sample()
+            z_t_2 = p_b_2.sample() #sample()
 
             """Get the smoothing model """
             q_I = self.q_I(z_t_2, b_t_1, b_t_2)
-            z_t_1_q = q_I.sample()
+            z_t_1_q = q_I.sample() #sample()
 
             """Initialize forward model """
             p_p = self.p_p(z_t_1_q)
@@ -192,18 +209,38 @@ class TdVae(nn.Module):
             """Reconstruct x from our belief dist """
             x_rec = self.p_d(z_t_2)
 
-
             """ Losses """
             l_x = torch.mean(torch.sum((x_rec - batch[:, i].data)**2, dim=1))
 
             """@ALEX are we sure we can just sum the KL's like this? """
-            l_2 = torch.mean(torch.sum(torch.distributions.kl.kl_divergence(q_I, p_b_1), dim=1))
+            klt = torch.distributions.kl.kl_divergence(q_I, p_b_1)
+            kl_sum = torch.sum(klt, dim=1)
+            kl_loss = torch.mean(kl_sum)
+
+            test_kl = False
+            if test_kl:
+                def KL(p, q, batch_idx):
+                    p_sig = p.scale[batch_idx]
+                    p_mu  = p.loc[batch_idx]
+                    q_sig = q.scale[batch_idx]
+                    q_mu = q.loc[batch_idx]
+                    kl = 0.0
+                    for i in range(self.z_size):
+                        first = torch.log(q_sig[i] / p_sig[i])
+                        second = p_sig[i].pow(2) + (p_mu[i] - q_mu[i]).pow(2)
+                        third = 2 * q_sig[i].pow(2)
+                        kl += first + second / third - .5
+                    return kl
+                for i in range(self.batch_size):
+                    assert(np.isclose(KL(q_I, p_b_1, i).cpu().data.numpy(),
+                                      kl_sum[i].cpu().data.numpy()))
+
             """@ALEX same question for the log-lkelihoods. """
             log_p_b = torch.sum(p_b_2.log_prob(z_t_2) - p_p.log_prob(z_t_2), dim=1)
             l_1 = torch.mean(log_p_b)
             loss = l_x + l_1 + l_2
 
-            if t % 5000 == 0 and i != 0:
+            if t != 0 and t % 5000 == 0:
                 """ Visualization help for debugging"""
                 gpu_vis(x_rec.data[0])
                 gpu_vis(batch[0, i].data)
@@ -212,11 +249,10 @@ class TdVae(nn.Module):
             loss.backward()
             opt.step()
             opt.zero_grad()
-            self.zero_grad()
 
 batch_size = 256
 mean_field = TdVae(batch_size).to(device)
-optimizer = optim.Adam(mean_field.parameters(), lr=.005)
+optimizer = optim.Adam(mean_field.parameters(), lr=.001)
 
 mean_field.train(dataset, optimizer)
 
