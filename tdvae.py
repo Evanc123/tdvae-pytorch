@@ -33,6 +33,7 @@ dataset = datasets.make_dataset(dataset_len, seq_len)
 
 dataset = torch.Tensor(dataset).to(device)
 
+bce = torch.nn.BCELoss()
 
 def eye_like(tensor):
     return torch.eye(*tensor.size(), out=torch.empty_like(tensor))
@@ -90,8 +91,8 @@ class TdVae(nn.Module):
 
         """P_b(z | b) """
         #b_t_size
-        self.p_b_f_1 = nn.Linear(784, self.b_t_size)
-        self.p_b_f_2 = nn.Linear(784, self.b_t_size)
+        self.p_b_f_1 = nn.Linear(self.b_t_size, self.b_t_size)
+        self.p_b_f_2 = nn.Linear(self.b_t_size, self.b_t_size)
         #self.p_b_f_sig = nn.Linear(self.b_t_size, self.z_size * self.z_size)
         self.p_b_f_sig = nn.Linear(self.b_t_size, self.z_size)
         self.p_b_f_mu  = nn.Linear(self.b_t_size, self.z_size)
@@ -105,7 +106,7 @@ class TdVae(nn.Module):
         self.p_p_f_sig = nn.Linear(self.b_t_size, self.z_size)
 
         """Q(z_t_1 | z_t_2, b_t_1, b_t_2) """
-        self.q_I_f_1 = nn.Linear(self.b_t_size + self.b_t_size + self.z_size + 784,
+        self.q_I_f_1 = nn.Linear(self.b_t_size + self.b_t_size + self.z_size,
                                  self.b_t_size)
         self.q_I_f_2 = nn.Linear(self.b_t_size, self.b_t_size)
         self.q_I_f_3 = nn.Linear(self.b_t_size, self.b_t_size)
@@ -137,12 +138,12 @@ class TdVae(nn.Module):
         #dist = MultivariateNormal(mu, eyes)
         #return dist
 
-    def q_I(self, z_t_2, b_t_1, b_t_2, x):
-        pre  = self.q_I_f_1(torch.cat((z_t_2, b_t_1, b_t_2, x), 1))
-        #tanh = F.tanh(self.q_I_f_2(pre))
-        #sig  = F.sigmoid(self.q_I_f_3(pre))
-        #out  = tanh * sig
-        out = F.relu(self.q_I_f_2(pre))
+    def q_I(self, z_t_2, b_t_1, b_t_2):
+        pre  = self.q_I_f_1(torch.cat((z_t_2, b_t_1, b_t_2), 1))
+        tanh = F.tanh(self.q_I_f_2(pre))
+        sig  = F.sigmoid(self.q_I_f_3(pre))
+        out  = tanh * sig
+        #out = F.relu(self.q_I_f_2(pre))
         #out = F.relu(self.q_I_f_2(pre))
         mu = self.q_I_f_mu(out)
         sigma = torch.exp(self.q_I_f_sig(out))
@@ -156,13 +157,12 @@ class TdVae(nn.Module):
         tanh = F.tanh(self.p_p_f_2(pre))
         sig  = F.sigmoid(self.p_p_f_3(pre))
         out  = tanh * sig
-        #out = F.relu(self.p_p_f_2(pre))
         mu = self.p_p_f_mu(out)
         sigma = torch.exp(self.p_p_f_sig(out))
         return Normal(mu, sigma)
-        eyes = sigma.view(-1, self.z_size, self.z_size) * self.eye
-        dist = MultivariateNormal(mu, eyes)
-        return dist
+        #eyes = sigma.view(-1, self.z_size, self.z_size) * self.eye
+        #dist = MultivariateNormal(mu, eyes)
+        #return dist
 
     def encode(self, x):
         h1 = F.relu(self.fenc1(x))
@@ -170,7 +170,7 @@ class TdVae(nn.Module):
 
     def p_d(self, z):
         h3 = F.relu(self.fdec1(F.relu(self.fdec0(z))))
-        return self.fdec2(h3)
+        return F.sigmoid(self.fdec2(h3))
 
     def init_hidden(self):
         return (torch.zeros(1, self.batch_size, self.b_t_size).to(device),
@@ -198,26 +198,29 @@ class TdVae(nn.Module):
                 b_t_2 = lstm_out.squeeze()
 
             """Get p_b distributions """
-            p_b_2 = self.p_b(batch[:,i]) #b_t_2
-            p_b_1 = self.p_b(batch[:,i]) #b_t_1
+            p_b_2 = self.p_b(b_t_2)
+            p_b_1 = self.p_b(b_t_1)
 
             """Get our sample z_t_2 """
             z_t_2 = p_b_2.rsample() #sample()
 
             """Get the smoothing model """
-            q_I = self.q_I(z_t_2, b_t_1, b_t_2, batch[:,i])
+            q_I = self.q_I(z_t_2, b_t_1, b_t_2)
             z_t_1_q = q_I.rsample() #sample()
 
             """Initialize forward model """
             p_p = self.p_p(z_t_1_q)
 
+            print('forward p_p max-mean, min-scale', p_p.loc.max(), p_p.scale.min())
             print('z t1q shape', z_t_1_q.shape)
 
             """Reconstruct x from our belief dist """
             x_rec = self.p_d(z_t_2)#self.p_d(z_t_2)
 
             """ Losses """
-            l_x = torch.mean(torch.sum((x_rec - batch[:, i].data)**2, dim=1))
+            #l_x = torch.mean(torch.sum((x_rec - batch[:, i].data)**2, dim=1))
+            l_x = bce(x_rec, batch[:,i].data)
+            #print('l_x', l_x)
 
             """@ALEX are we sure we can just sum the KL's like this? """
             klt = torch.distributions.kl.kl_divergence(q_I, p_b_1)
@@ -225,7 +228,7 @@ class TdVae(nn.Module):
             kl_loss = torch.mean(kl_sum)
 
             #print('z_t_2', p_b_2.loc, p_b_2.scale)
-            print('pb1', q_I.loc, q_I.scale.min())
+            print('p_b_2 max-mean, min-stdv', p_b_2.loc.max(), p_b_2.scale.min())
 
             test_kl = False
             if test_kl:
@@ -248,7 +251,7 @@ class TdVae(nn.Module):
             """@ALEX same question for the log-lkelihoods. """
             log_p_b = torch.sum(p_b_2.log_prob(z_t_2) - p_p.log_prob(z_t_2), dim=1)
             l_1 = torch.mean(log_p_b)
-            loss = l_x + 0.0 * l_1 + 0.0 * kl_loss
+            loss = l_x + 0.001 * l_1 + 0.001 * kl_loss
 
             print("x rec", x_rec.shape, x_rec.max())
             print("x real", batch[:,i].shape, batch[:,i].max())
