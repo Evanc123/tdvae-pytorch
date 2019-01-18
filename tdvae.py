@@ -16,6 +16,10 @@ import datasets
 from torch.distributions.normal import Normal
 
 from torch.distributions import MultivariateNormal
+from torchvision.utils import save_image
+
+def reshape_to_image(inp):
+    return inp.reshape((inp.shape[0], 1, 28, 28))
 
 def vis(arr, name):
     plt.imshow(arr)
@@ -256,11 +260,13 @@ class TdVae(nn.Module):
             print("x rec", x_rec.shape, x_rec.max())
             print("x real", batch[:,i].shape, batch[:,i].max())
 
+            
+
             if t != 0 and t % 100 == 0:
                 """ Visualization help for debugging"""
                 print('saving')
-                gpu_vis(x_rec.data[0], 'rec.png')
-                gpu_vis(batch[0, i].data, 'real.png')
+                save_image(reshape_to_image(x_rec.data[:]), 'rec.png')
+                save_image(reshape_to_image(batch[:, i].data), 'real.png')
                 #import pdb; pdb.set_trace()
             print('mse', l_x.item(), 'logprob', l_1.item(), 'kl', kl_loss, 'step', t)
             #kl -- l2
